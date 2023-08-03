@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
-struct BattleReport {
+pub struct BattleReport {
     pub session_id: String,
     pub result: BattleResult,
 
@@ -26,13 +26,13 @@ struct BattleReport {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum BattleResult {
+pub enum BattleResult {
     Win,
     Loss,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Event {
+pub struct Event {
     pub time: u32,
     pub kind: EventKind,
     pub vehicle: String,
@@ -43,7 +43,7 @@ struct Event {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-enum EventKind {
+pub enum EventKind {
     DestructionOfAircraft,
     DestructionOfGroundVevhiclesAndFleets,
     AssistanceInDestroyingTheEnemy,
@@ -55,13 +55,13 @@ enum EventKind {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Reward {
+pub struct Reward {
     pub silverlions: u32,
     pub research: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Vehicle {
+pub struct Vehicle {
     pub name: String,
     pub activity: u8,
     pub time_played: u32,
@@ -69,20 +69,20 @@ struct Vehicle {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct VehicleResearch {
+pub struct VehicleResearch {
     pub name: String,
     pub research: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ModificationResearch {
+pub struct ModificationResearch {
     pub vehicle: String,
     pub name: String,
     pub research: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Award {
+pub struct Award {
     pub time: u32,
     pub name: String,
     pub reward: Reward,
