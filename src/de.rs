@@ -1,3 +1,5 @@
+//! Battle Report Deserialization
+
 use std::io;
 
 use crate::{battle_report::BattleReport, parser};

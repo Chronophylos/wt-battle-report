@@ -1,3 +1,5 @@
+//! Battle Report Value
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]

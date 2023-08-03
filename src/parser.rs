@@ -1,3 +1,5 @@
+//! Battle Report Parser
+
 use crate::battle_report::BattleReport;
 
 pub enum Error {}
