@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
 struct BattleReport {
     pub session_id: String,
     pub result: BattleResult,
@@ -22,13 +24,14 @@ struct BattleReport {
     pub total_rewards: Reward,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 enum BattleResult {
     Win,
     Loss,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Event {
     pub time: u32,
     pub kind: EventKind,
@@ -37,7 +40,8 @@ struct Event {
     pub reward: Reward,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 enum EventKind {
     DestructionOfAircraft,
@@ -50,13 +54,13 @@ enum EventKind {
     CaptureOfZones,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Reward {
     pub silverlions: u32,
     pub research: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Vehicle {
     pub name: String,
     pub activity: u8,
@@ -64,20 +68,20 @@ struct Vehicle {
     pub reward: Reward,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct VehicleResearch {
     pub name: String,
     pub research: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct ModificationResearch {
     pub vehicle: String,
     pub name: String,
     pub research: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Award {
     pub time: u32,
     pub name: String,
