@@ -1,11 +1,14 @@
 //! Battle Report Value
 
+use std::str::FromStr;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BattleReport {
     pub session_id: String,
     pub result: BattleResult,
+    pub map: String,
 
     pub events: Vec<Event>,
 
@@ -24,6 +27,14 @@ pub struct BattleReport {
 
     pub earned_rewards: Reward,
     pub total_rewards: Reward,
+}
+
+impl FromStr for BattleReport {
+    type Err = crate::parser::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        crate::parser::parse(s)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -56,7 +67,7 @@ pub enum EventKind {
     CaptureOfZones,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct Reward {
     pub silverlions: u32,
     pub research: u32,

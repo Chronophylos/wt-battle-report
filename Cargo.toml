@@ -6,3 +6,7 @@ edition = "2021"
 [dependencies]
 nom = "7.1.3"
 serde = { version = "1.0.180", features = ["derive"] }
+thiserror = "1.0.44"
+
+[dev-dependencies]
+rstest = "0.18.2"
