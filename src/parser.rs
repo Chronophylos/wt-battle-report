@@ -81,6 +81,8 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
     // TODO: vehicle research
     // TODO: modification research
 
+    // TODO: used items (optional)
+
     // TODO: session
     // TODO: total
 
