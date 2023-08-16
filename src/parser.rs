@@ -40,13 +40,57 @@ pub fn parse(input: &str) -> Result<BattleReport, Error> {
 fn battle_report(input: &str) -> IResult<BattleReport> {
     let (input, (battle_result, mission_name)) = result_line(input)?;
 
+    let (input, tables) = many0(table)(input)?;
+    // TODO: turn tables into events
+    let events = tables
+        .into_iter()
+        .map(|table| {
+            table
+                .rows
+                .into_iter()
+                .map(move |row| {
+                    let time = row.time;
+                    let vehicle = row.vehicle.to_string();
+                    let enemy = Some(row.enemy_vehicle.to_string());
+                    let reward = row.reward;
+                    let kind = table.name.to_string();
+
+                    crate::Event {
+                        time,
+                        kind,
+                        vehicle,
+                        enemy,
+                        reward,
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+
+    // TODO: awards
+    // TODO: activity time
+    // TODO: time played
+    // TODO: other awards
+    // TODO: earned
+    // TODO: activity
+    // TODO: damaged vehicles
+    // TODO: automatic repair
+    // TODO: automatic restock
+
+    // TODO: vehicle research
+    // TODO: modification research
+
+    // TODO: session
+    // TODO: total
+
     Ok((
         input,
         BattleReport {
             session_id: "".to_string(),
             result: battle_result,
             map: mission_name.to_string(),
-            events: vec![],
+            events,
             awards: vec![],
             other_awards: Default::default(),
             vehicles: vec![],
@@ -88,7 +132,7 @@ struct Table<'a> {
 }
 
 struct Row<'a> {
-    time: &'a str,
+    time: u32,
     vehicle: &'a str,
     enemy_vehicle: &'a str,
     reward: Reward,
@@ -105,6 +149,7 @@ struct Row<'a> {
 ///     11:47    Sherman Firefly    T-34 (1942)     930 SL     58 RP
 ///     13:14    Sherman Firefly    Chi-Nu II       930 SL     61 RP
 ///     13:43    Sherman Firefly    KV-85           930 SL     64 RP
+///
 /// ```
 fn table(input: &str) -> IResult<Table<'_>> {
     // Header
@@ -112,11 +157,13 @@ fn table(input: &str) -> IResult<Table<'_>> {
     let (input, _) = pair(multispace0, digit1)(input)?; // consume number of rows
     let (input, _) = row_separator(input)?; // consume separator
     let (input, reward) = parse_reward(input)?; // consume reward
-
     let (input, _) = row_ending(input)?; // consume line ending
 
     // Rows
     let (input, rows) = many1(table_row)(input)?;
+
+    // final empty line
+    let (input, _) = line_ending(input)?;
 
     Ok((input, Table { name, reward, rows }))
 }
@@ -168,8 +215,11 @@ fn table_row(input: &str) -> IResult<Row<'_>> {
     ))
 }
 
-fn timestamp(input: &str) -> IResult<&str> {
-    preceded(tag("    "), take_while(|c| c != ' '))(input)
+fn timestamp(input: &str) -> IResult<u32> {
+    map(
+        preceded(tag(INDENT), separated_pair(u32, tag(":"), u32)),
+        |(hours, minutes)| hours * 60 + minutes,
+    )(input)
 }
 
 /// parse a reward
@@ -305,7 +355,7 @@ mod test {
     #[rstest]
     #[case(
         "    7:13     Concept 3          M6A1            1010 SL    77 RP\n",
-        "7:13",
+        7*60+13,
         "Concept 3",
         "M6A1",
         1010,
@@ -313,7 +363,7 @@ mod test {
     )]
     #[case(
         "    8:17     Concept 3          ISU-122()       1010 SL    80 RP\n",
-        "8:17",
+        8*60+17,
         "Concept 3",
         "ISU-122()",
         1010,
@@ -321,7 +371,7 @@ mod test {
     )]
     #[case(
         "    8:31     Concept 3          Chi-To Late     1010 SL    73 RP\n",
-        "8:31",
+        8*60+31,
         "Concept 3",
         "Chi-To Late",
         1010,
@@ -329,7 +379,7 @@ mod test {
     )]
     #[case(
         "    10:07    Wyvern S4          Pe-8            440 SL    11 + (Talismans)11 = 22 RP\n",
-        "10:07",
+        10*60+7,
         "Wyvern S4",
         "Pe-8",
         440,
@@ -337,7 +387,7 @@ mod test {
     )]
     #[case(
         "    13:14    Sherman Firefly    Chi-Nu II       930 SL     61 RP\n",
-        "13:14",
+        13*60+14,
         "Sherman Firefly",
         "Chi-Nu II",
         930,
@@ -345,22 +395,23 @@ mod test {
     )]
     #[case(
         "    13:43    Sherman Firefly    KV-85           930 SL     64 RP\n",
-        "13:43",
+        13*60+43,
         "Sherman Firefly",
         "KV-85",
         930,
         64
     )]
-    #[case("    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP\n", "3:45", "Concept 3", "M36 GMC()", 505, 40)]
+    #[case("    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP\n", 3*60+45, "Concept 3", "M36 GMC()", 505, 40)]
     fn parse_row(
         #[case] input: &str,
-        #[case] time: &str,
+        #[case] time: u32,
         #[case] vehice: &str,
         #[case] enemy_vehicle: &str,
         #[case] silverlions: u32,
         #[case] research: u32,
     ) {
-        let (_, row) = super::table_row(input).unwrap();
+        let (input, row) = super::table_row(input).unwrap();
+        assert_eq!(input, "");
         assert_eq!(row.time, time);
         assert_eq!(row.vehicle, vehice);
         assert_eq!(row.enemy_vehicle, enemy_vehicle);

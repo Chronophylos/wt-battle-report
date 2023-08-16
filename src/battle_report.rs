@@ -47,24 +47,10 @@ pub enum BattleResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct Event {
     pub time: u32,
-    pub kind: EventKind,
+    pub kind: String,
     pub vehicle: String,
     pub enemy: Option<String>,
     pub reward: Reward,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum EventKind {
-    DestructionOfAircraft,
-    DestructionOfGroundVevhiclesAndFleets,
-    AssistanceInDestroyingTheEnemy,
-    CriticalDamageToTheEnemy,
-    ScoutingOfTheEnemy,
-    DamageTakenByScoutedEnemies,
-    DestructionByAlliesOfScoutedEnemies,
-    CaptureOfZones,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]

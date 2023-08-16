@@ -1,10 +1,9 @@
 pub mod battle_report;
 pub mod de;
 mod parser;
-mod test;
 
 pub use battle_report::{
-    Award, BattleReport, BattleResult, Event, EventKind, ModificationResearch, Reward, Vehicle,
+    Award, BattleReport, BattleResult, Event, ModificationResearch, Reward, Vehicle,
     VehicleResearch,
 };
 pub use de::{from_reader, from_slice, from_str};
