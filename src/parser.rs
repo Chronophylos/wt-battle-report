@@ -300,7 +300,7 @@ fn vehicle_tables(input: &str) -> IResult<Vec<Vehicle>> {
 
     // time played
     let (input, _) = tuple((
-        tag("Time played"),
+        tag("Time Played"),
         pair(many1(space1), digit1),
         row_separator,
         parse_research_points,
@@ -350,27 +350,37 @@ mod test {
     use nom::{error::convert_error, Finish};
     use rstest::*;
 
-    use super::*;
+    use crate::*;
+
+    fn run_parser<T, P>(input: &str, parser: P) -> (&str, T)
+    where
+        P: Fn(&str) -> super::IResult<T>,
+    {
+        match parser(input).finish() {
+            Ok(result) => result,
+            Err(err) => panic!("\n{}", convert_error(input, err)),
+        }
+    }
 
     #[test]
     fn parse_victory_as_result_name() {
         let input = "Victory";
-        assert_eq!(battle_result(input), Ok(("", crate::BattleResult::Win)))
+        assert_eq!(super::battle_result(input), Ok(("", BattleResult::Win)))
     }
 
     #[test]
     fn parse_defeat_as_result_name() {
         let input = "Defeat";
-        assert_eq!(battle_result(input), Ok(("", crate::BattleResult::Loss)))
+        assert_eq!(super::battle_result(input), Ok(("", BattleResult::Loss)))
     }
 
     #[test]
     fn test_parse_result_line() {
         let input = "Victory in the [Domination] Poland (winter) mission!\r\n\n";
-        let result = result_line(input).finish();
+        let result = super::result_line(input).finish();
         match result {
             Ok((_, (result, map))) => {
-                assert_eq!(result, crate::BattleResult::Win);
+                assert_eq!(result, BattleResult::Win);
                 assert_eq!(map, "[Domination] Poland (winter)")
             }
             Err(err) => {
@@ -382,7 +392,7 @@ mod test {
     #[rstest]
     fn test_real_data(#[files("./data/*.report")] path: PathBuf) {
         let input = std::fs::read_to_string(&path).unwrap();
-        let result = parse(&input);
+        let result = super::parse(&input);
         if let Err(err) = result {
             panic!("\n{err}")
         }
@@ -490,5 +500,37 @@ mod test {
         assert_eq!(row.enemy_vehicle, enemy_vehicle);
         assert_eq!(row.reward.silverlions, silverlions);
         assert_eq!(row.reward.research, research);
+    }
+
+    #[test]
+    fn parse_other_awards() {
+        let input = "Other awards                                       5295 SL     115 RP    \n\n";
+        let (input, reward) = super::parse_other_awards(input).unwrap();
+        assert_eq!(input, "");
+        assert_eq!(reward.silverlions, 5295);
+        assert_eq!(reward.research, 115);
+    }
+
+    #[test]
+    fn parse_vehicle_tables() {
+        let input = r#"Activity Time                                 3    3152 SL     160 RP    
+    13:54    Concept 3          730 SL     68 RP                     
+    13:54    Sherman Firefly    522 SL     56 RP                     
+    13:54    Wyvern S4          1900 SL    18 + (Talismans)18 = 36 RP
+
+Time Played                                   3               1057 RP    
+    Concept 3          97%    8:21    680 RP                     
+    Sherman Firefly    84%    2:51    185 RP                     
+    Wyvern S4          67%    1:33    96 + (Talismans)96 = 192 RP
+
+"#;
+        let (input, vehicles) = run_parser(input, super::vehicle_tables);
+        assert_eq!(input, "");
+        assert_eq!(vehicles.len(), 3);
+        assert_eq!(vehicles[0].name, "Concept 3");
+        assert_eq!(vehicles[0].activity, 97);
+        assert_eq!(vehicles[0].time_played, 8 * 60 + 21);
+        assert_eq!(vehicles[0].reward.silverlions, 730);
+        assert_eq!(vehicles[0].reward.research, 68 + 680);
     }
 }
