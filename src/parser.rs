@@ -4,17 +4,19 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until, take_while, take_while1},
     character::complete::{
-        char, digit1, line_ending, multispace0, newline, not_line_ending, space0, u32,
+        char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1, u32,
     },
-    combinator::{map, map_res, opt, recognize, value},
-    error::{context, convert_error, dbg_dmp, VerboseError},
-    multi::many1,
-    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
+    combinator::{map, opt, recognize, value},
+    error::{convert_error, VerboseError},
+    multi::{many0, many1},
+    sequence::{pair, preceded, separated_pair, terminated, tuple},
 };
 
 use crate::{battle_report::BattleReport, BattleResult, Reward};
 
 type IResult<'a, O> = nom::IResult<&'a str, O, VerboseError<&'a str>>;
+
+const INDENT: &str = "    "; // 4 spaces
 
 #[derive(Debug, thiserror::Error)]
 #[error("Error parsing battle report: {message}")]
@@ -106,7 +108,7 @@ struct Row<'a> {
 /// ```
 fn table(input: &str) -> IResult<Table<'_>> {
     // Header
-    let (input, name) = take_until("     ")(input)?; // consume name
+    let (input, name) = take_until(INDENT)(input)?; // consume name
     let (input, _) = pair(multispace0, digit1)(input)?; // consume number of rows
     let (input, _) = row_separator(input)?; // consume separator
     let (input, reward) = parse_reward(input)?; // consume reward
@@ -116,22 +118,15 @@ fn table(input: &str) -> IResult<Table<'_>> {
     // Rows
     let (input, rows) = many1(table_row)(input)?;
 
-    Ok((
-        input,
-        Table {
-            name,
-            reward,
-            rows: vec![],
-        },
-    ))
+    Ok((input, Table { name, reward, rows }))
 }
 
 fn row_separator(input: &str) -> IResult<()> {
-    value((), pair(tag("    "), multispace0))(input)
+    value((), pair(tag(INDENT), many0(space1)))(input)
 }
 
 fn row_ending(input: &str) -> IResult<()> {
-    value((), pair(multispace0, line_ending))(input)
+    value((), pair(many0(space1), line_ending))(input)
 }
 
 /// parse a table row
@@ -151,10 +146,10 @@ fn table_row(input: &str) -> IResult<Row<'_>> {
     let (input, time) = terminated(timestamp, row_separator)(input)?;
 
     // Vehicle
-    let (input, vehicle) = terminated(take_until("     "), row_separator)(input)?;
+    let (input, vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
 
     // Enemy vehicle
-    let (input, enemy_vehicle) = terminated(take_until("     "), row_separator)(input)?;
+    let (input, enemy_vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
 
     // Optional "x"
     let (input, _) = opt(pair(tag("\u{d7}"), row_separator))(input)?;
@@ -356,7 +351,7 @@ mod test {
         930,
         64
     )]
-    #[case("    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP", "3:45", "Concept 3", "M36 GMC()\n", 505, 40)]
+    #[case("    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP\n", "3:45", "Concept 3", "M36 GMC()", 505, 40)]
     fn parse_row(
         #[case] input: &str,
         #[case] time: &str,
