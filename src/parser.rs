@@ -4,15 +4,15 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until, take_while, take_while1},
     character::complete::{
-        char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1, u32,
+        char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1, u32, u8,
     },
     combinator::{map, opt, recognize, value},
     error::{convert_error, VerboseError},
     multi::{many0, many1},
-    sequence::{pair, preceded, separated_pair, terminated, tuple},
+    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
 };
 
-use crate::{battle_report::BattleReport, BattleResult, Reward};
+use crate::{battle_report::BattleReport, Award, BattleResult, Event, Reward, Vehicle};
 
 type IResult<'a, O> = nom::IResult<&'a str, O, VerboseError<&'a str>>;
 
@@ -38,40 +38,15 @@ pub fn parse(input: &str) -> Result<BattleReport, Error> {
 }
 
 fn battle_report(input: &str) -> IResult<BattleReport> {
-    let (input, (battle_result, mission_name)) = result_line(input)?;
+    let (input, (result, mission_name)) = result_line(input)?;
 
-    let (input, tables) = many0(table)(input)?;
-    // TODO: turn tables into events
-    let events = tables
-        .into_iter()
-        .map(|table| {
-            table
-                .rows
-                .into_iter()
-                .map(move |row| {
-                    let time = row.time;
-                    let vehicle = row.vehicle.to_string();
-                    let enemy = Some(row.enemy_vehicle.to_string());
-                    let reward = row.reward;
-                    let kind = table.name.to_string();
+    let (input, (events, awards, vehicles, other_awards)) = tuple((
+        parse_events,
+        award_table,
+        vehicle_tables,
+        parse_other_awards,
+    ))(input)?;
 
-                    crate::Event {
-                        time,
-                        kind,
-                        vehicle,
-                        enemy,
-                        reward,
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-
-    // TODO: awards
-    // TODO: activity time
-    // TODO: time played
-    // TODO: other awards
     // TODO: earned
     // TODO: activity
     // TODO: damaged vehicles
@@ -90,12 +65,12 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
         input,
         BattleReport {
             session_id: "".to_string(),
-            result: battle_result,
-            map: mission_name.to_string(),
+            result,
+            mission_name: mission_name.to_string(),
             events,
-            awards: vec![],
-            other_awards: Default::default(),
-            vehicles: vec![],
+            awards,
+            other_awards,
+            vehicles,
             activity: 0,
             damaged_vehicles: vec![],
             repair_cost: 0,
@@ -103,7 +78,7 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
             vehicle_research: vec![],
             modification_research: vec![],
             earned_rewards: Default::default(),
-            total_rewards: Default::default(),
+            balance: Default::default(),
         },
     ))
 }
@@ -154,20 +129,21 @@ struct Row<'a> {
 ///
 /// ```
 fn table(input: &str) -> IResult<Table<'_>> {
-    // Header
+    let (input, (name, reward)) = table_header(input)?;
+    let (input, rows) = many1(table_row)(input)?;
+    let (input, _) = line_ending(input)?; // empty line
+
+    Ok((input, Table { name, reward, rows }))
+}
+
+fn table_header(input: &str) -> IResult<(&str, Reward)> {
     let (input, name) = take_until(INDENT)(input)?; // consume name
     let (input, _) = pair(multispace0, digit1)(input)?; // consume number of rows
     let (input, _) = row_separator(input)?; // consume separator
     let (input, reward) = parse_reward(input)?; // consume reward
     let (input, _) = row_ending(input)?; // consume line ending
 
-    // Rows
-    let (input, rows) = many1(table_row)(input)?;
-
-    // final empty line
-    let (input, _) = line_ending(input)?;
-
-    Ok((input, Table { name, reward, rows }))
+    Ok((input, (name, reward)))
 }
 
 fn row_separator(input: &str) -> IResult<()> {
@@ -191,19 +167,10 @@ fn row_ending(input: &str) -> IResult<()> {
 ///     3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
 /// ```
 fn table_row(input: &str) -> IResult<Row<'_>> {
-    // Time
-    let (input, time) = terminated(timestamp, row_separator)(input)?;
-
-    // Vehicle
+    let (input, time) = preceded(tag(INDENT), terminated(timestamp, row_separator))(input)?;
     let (input, vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
-
-    // Enemy vehicle
     let (input, enemy_vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
-
-    // Optional "x"
     let (input, _) = opt(pair(tag("\u{d7}"), row_separator))(input)?;
-
-    // Reward
     let (input, reward) = terminated(parse_reward, row_ending)(input)?;
 
     Ok((
@@ -218,10 +185,9 @@ fn table_row(input: &str) -> IResult<Row<'_>> {
 }
 
 fn timestamp(input: &str) -> IResult<u32> {
-    map(
-        preceded(tag(INDENT), separated_pair(u32, tag(":"), u32)),
-        |(hours, minutes)| hours * 60 + minutes,
-    )(input)
+    map(separated_pair(u32, tag(":"), u32), |(hours, minutes)| {
+        hours * 60 + minutes
+    })(input)
 }
 
 /// parse a reward
@@ -270,6 +236,111 @@ fn parse_research_points_simple(input: &str) -> IResult<u32> {
 fn parse_research_points_complex(input: &str) -> IResult<u32> {
     let (input, _) = take_until("= ")(input)?;
     preceded(tag("= "), parse_research_points_simple)(input)
+}
+
+fn parse_events(input: &str) -> IResult<Vec<Event>> {
+    let (input, tables) = many0(table)(input)?;
+    let events = tables
+        .into_iter()
+        .map(|table| {
+            table
+                .rows
+                .into_iter()
+                .map(move |row| {
+                    let time = row.time;
+                    let vehicle = row.vehicle.to_string();
+                    let enemy = Some(row.enemy_vehicle.to_string());
+                    let reward = row.reward;
+                    let kind = table.name.to_string();
+
+                    Event {
+                        time,
+                        kind,
+                        vehicle,
+                        enemy,
+                        reward,
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+
+    Ok((input, events))
+}
+
+fn award_table(input: &str) -> IResult<Vec<Award>> {
+    let (input, rows) = preceded(table_header, many1(short_row))(input)?;
+    let (input, _) = line_ending(input)?; // empty line
+
+    let awards = rows
+        .into_iter()
+        .map(|(time, name, reward)| Award {
+            time,
+            name: name.to_string(),
+            reward,
+        })
+        .collect();
+
+    Ok((input, awards))
+}
+
+fn short_row(input: &str) -> IResult<(u32, &str, Reward)> {
+    tuple((
+        preceded(tag(INDENT), terminated(timestamp, row_separator)),
+        terminated(take_until(INDENT), row_separator),
+        terminated(parse_reward, row_ending),
+    ))(input)
+}
+
+fn vehicle_tables(input: &str) -> IResult<Vec<Vehicle>> {
+    // activity time
+    let (input, activity_rows) = preceded(table_header, many1(short_row))(input)?;
+    let (input, _) = line_ending(input)?; // empty line
+
+    // time played
+    let (input, _) = tuple((
+        tag("Time played"),
+        pair(many1(space1), digit1),
+        row_separator,
+        parse_research_points,
+        row_ending,
+    ))(input)?;
+
+    let (input, time_played_rows) = many1(tuple((
+        preceded(tag(INDENT), terminated(take_until(INDENT), row_separator)), // name
+        terminated(terminated(u8, tag("%")), row_separator),                  // activity
+        terminated(timestamp, row_separator),                                 // time played
+        terminated(parse_research_points, row_ending),                        // reward
+    )))(input)?;
+
+    let (input, _) = line_ending(input)?; // empty line
+
+    let vehicles = activity_rows
+        .into_iter()
+        .zip(time_played_rows.into_iter())
+        .map(
+            |((_, name, reward), (_, activity, time_played, additional_rp))| Vehicle {
+                name: name.to_string(),
+                activity,
+                time_played,
+                reward: Reward {
+                    silverlions: reward.silverlions,
+                    research: reward.research + additional_rp,
+                },
+            },
+        )
+        .collect();
+
+    Ok((input, vehicles))
+}
+
+fn parse_other_awards(input: &str) -> IResult<Reward> {
+    delimited(
+        pair(tag("Other awards"), row_separator),
+        parse_reward,
+        pair(row_ending, line_ending),
+    )(input)
 }
 
 #[cfg(test)]

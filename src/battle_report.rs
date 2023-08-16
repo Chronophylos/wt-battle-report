@@ -8,7 +8,7 @@ use serde::Serialize;
 pub struct BattleReport {
     pub session_id: String,
     pub result: BattleResult,
-    pub map: String,
+    pub mission_name: String,
 
     pub events: Vec<Event>,
 
@@ -26,7 +26,7 @@ pub struct BattleReport {
     pub modification_research: Vec<ModificationResearch>,
 
     pub earned_rewards: Reward,
-    pub total_rewards: Reward,
+    pub balance: Reward,
 }
 
 impl FromStr for BattleReport {
