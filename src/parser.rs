@@ -7,7 +7,7 @@ use nom::{
         char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1, u32, u8,
     },
     combinator::{map, opt, recognize, value},
-    error::{convert_error, VerboseError},
+    error::{context, convert_error, VerboseError},
     multi::{many0, many1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
 };
@@ -41,10 +41,10 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
     let (input, (result, mission_name)) = result_line(input)?;
 
     let (input, (events, awards, vehicles, other_awards)) = tuple((
-        parse_events,
-        award_table,
-        vehicle_tables,
-        parse_other_awards,
+        context("events", parse_events),
+        context("awards", award_table),
+        context("activity and time played", vehicle_tables),
+        context("other awards", parse_other_awards),
     ))(input)?;
 
     // TODO: earned
@@ -102,16 +102,15 @@ fn battle_result(input: &str) -> IResult<BattleResult> {
     ))(input)
 }
 
-struct Table<'a> {
-    name: &'a str,
-    reward: Reward,
-    rows: Vec<Row<'a>>,
+struct Table {
+    name: String,
+    rows: Vec<Row>,
 }
 
-struct Row<'a> {
+struct Row {
     time: u32,
-    vehicle: &'a str,
-    enemy_vehicle: &'a str,
+    vehicle: String,
+    enemy_vehicle: String,
     reward: Reward,
 }
 
@@ -128,12 +127,21 @@ struct Row<'a> {
 ///     13:43    Sherman Firefly    KV-85           930 SL     64 RP
 ///
 /// ```
-fn table(input: &str) -> IResult<Table<'_>> {
-    let (input, (name, reward)) = table_header(input)?;
-    let (input, rows) = many1(table_row)(input)?;
+fn table(input: &str) -> IResult<Table> {
+    let (input, (name, _)) = context("table header", table_header)(input)?;
+
+    eprintln!("table name: {name}");
+
+    let (input, rows) = context("table rows", many1(table_row))(input)?;
     let (input, _) = line_ending(input)?; // empty line
 
-    Ok((input, Table { name, reward, rows }))
+    Ok((
+        input,
+        Table {
+            name: name.to_string(),
+            rows,
+        },
+    ))
 }
 
 fn table_header(input: &str) -> IResult<(&str, Reward)> {
@@ -147,11 +155,11 @@ fn table_header(input: &str) -> IResult<(&str, Reward)> {
 }
 
 fn row_separator(input: &str) -> IResult<()> {
-    value((), pair(tag(INDENT), many0(space1)))(input)
+    context("row separator", value((), pair(tag(INDENT), many0(space1))))(input)
 }
 
 fn row_ending(input: &str) -> IResult<()> {
-    value((), pair(many0(space1), line_ending))(input)
+    context("row ending", value((), pair(many0(space1), line_ending)))(input)
 }
 
 /// parse a table row
@@ -166,7 +174,7 @@ fn row_ending(input: &str) -> IResult<()> {
 ///     13:43    Sherman Firefly    KV-85           930 SL     64 RP
 ///     3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
 /// ```
-fn table_row(input: &str) -> IResult<Row<'_>> {
+fn table_row(input: &str) -> IResult<Row> {
     let (input, time) = preceded(tag(INDENT), terminated(timestamp, row_separator))(input)?;
     let (input, vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
     let (input, enemy_vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
@@ -177,8 +185,8 @@ fn table_row(input: &str) -> IResult<Row<'_>> {
         input,
         Row {
             time,
-            vehicle,
-            enemy_vehicle,
+            vehicle: vehicle.to_string(),
+            enemy_vehicle: enemy_vehicle.to_string(),
             reward,
         },
     ))
@@ -239,9 +247,11 @@ fn parse_research_points_complex(input: &str) -> IResult<u32> {
 }
 
 fn parse_events(input: &str) -> IResult<Vec<Event>> {
-    let (input, tables) = many0(table)(input)?;
+    let (input, tables) = context("event tables", many0(table))(input)?;
+
     let events = tables
         .into_iter()
+        .inspect(|table| eprintln!("parsed table name: {}", table.name))
         .map(|table| {
             table
                 .rows
@@ -300,7 +310,7 @@ fn vehicle_tables(input: &str) -> IResult<Vec<Vehicle>> {
 
     // time played
     let (input, _) = tuple((
-        tag("Time Played"),
+        context("Time Played literal", tag("Time Played")),
         pair(many1(space1), digit1),
         row_separator,
         parse_research_points,
@@ -500,6 +510,52 @@ mod test {
         assert_eq!(row.enemy_vehicle, enemy_vehicle);
         assert_eq!(row.reward.silverlions, silverlions);
         assert_eq!(row.reward.research, research);
+    }
+
+    #[test]
+    fn parse_scouting_of_the_enemy_table() {
+        let input = r#"Scouting of the enemy                         5     255 SL               
+    2:05    Concept 3    M36 GMC()       51 SL
+    3:04    Concept 3    M36 GMC()       51 SL
+    5:56    Concept 3    Chi-To Late     51 SL
+    6:25    Concept 3    M6A1            51 SL
+    6:51    Concept 3    ISU-122()       51 SL
+
+Damage taken by scouted enemies               1     101 SL               
+    3:45    Concept 3    M36 GMC()     101 SL
+
+Destruction by allies of scouted enemies      1     505 SL      40 RP    
+    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
+
+"#;
+        let (input, table) = run_parser(input, super::table);
+        assert!(!input.is_empty());
+        assert_eq!(table.name, "Scouting of the enemy");
+        assert_eq!(table.rows.len(), 5);
+    }
+
+    #[test]
+    fn parse_awards_table() {
+        let input = r#"Awards                                       14    3450 SL     100 RP    
+    3:46     Intelligence             100 SL           
+    7:14     Tank Rescuer             50 SL            
+    8:18     Rank does not matter     500 SL           
+    8:32     Multi strike!            100 SL           
+    8:32     Without a miss           200 SL           
+    10:35    Ground Force Rescuer     150 SL           
+    11:47    Without a miss           200 SL           
+    13:14    Without a miss           200 SL           
+    13:43    Eye for Eye              300 SL           
+    13:43    Shadow strike streak!    100 SL           
+    13:43    Multi strike!            100 SL           
+    13:43    Without a miss           200 SL           
+    13:55    Final blow!              250 SL           
+    13:55    The Best Squad           1000 SL    100 RP
+
+"#;
+        let (input, awards) = run_parser(input, super::award_table);
+        assert_eq!(input, "");
+        assert_eq!(awards.len(), 14);
     }
 
     #[test]
