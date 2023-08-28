@@ -310,7 +310,6 @@ fn parse_events(input: &str) -> IResult<Vec<Event>> {
 
     let events = tables
         .into_iter()
-        .inspect(|table| eprintln!("parsed table name: {}", table.name))
         .map(|table| {
             table
                 .rows
@@ -339,8 +338,6 @@ fn parse_events(input: &str) -> IResult<Vec<Event>> {
 }
 
 fn award_table(input: &str) -> IResult<Vec<Award>> {
-    dbg!(input);
-
     let (input, rows) = context("award header", preceded(table_header, many1(short_row)))(input)?;
     let (input, _) = line_ending(input)?; // empty line
 
