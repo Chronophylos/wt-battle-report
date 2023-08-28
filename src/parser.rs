@@ -4,11 +4,12 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until, take_while, take_while1},
     character::complete::{
-        char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1, u32, u8,
+        alpha1, char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1,
+        u32, u8,
     },
-    combinator::{map, opt, recognize, value},
+    combinator::{map, opt, peek, recognize, value},
     error::{context, convert_error, VerboseError},
-    multi::{many0, many1},
+    multi::{many0, many1, many_m_n},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
 };
 
@@ -107,6 +108,7 @@ struct Table {
     rows: Vec<Row>,
 }
 
+#[derive(Debug)]
 struct Row {
     time: u32,
     vehicle: String,
@@ -128,11 +130,14 @@ struct Row {
 ///
 /// ```
 fn table(input: &str) -> IResult<Table> {
-    let (input, (name, _)) = context("table header", table_header)(input)?;
+    let (input, (name, count, _)) = context("table header", table_header)(input)?;
 
     eprintln!("table name: {name}");
 
-    let (input, rows) = context("table rows", many1(table_row))(input)?;
+    let (input, rows) = context(
+        "table rows",
+        many_m_n(count as usize, count as usize, table_row),
+    )(input)?;
     let (input, _) = line_ending(input)?; // empty line
 
     Ok((
@@ -144,14 +149,19 @@ fn table(input: &str) -> IResult<Table> {
     ))
 }
 
-fn table_header(input: &str) -> IResult<(&str, Reward)> {
-    let (input, name) = take_until(INDENT)(input)?; // consume name
-    let (input, _) = pair(multispace0, digit1)(input)?; // consume number of rows
-    let (input, _) = row_separator(input)?; // consume separator
-    let (input, reward) = parse_reward(input)?; // consume reward
-    let (input, _) = row_ending(input)?; // consume line ending
+fn table_header(input: &str) -> IResult<(String, u32, Reward)> {
+    //let (input, (name, _, reward)) = tuple((
+    //    context("table name", terminated(take_until(INDENT), row_separator)),
+    //    context("row count", terminated(digit1, row_separator)),
+    //    context("total reward", terminated(parse_reward, row_ending)),
+    //))(input)?;
 
-    Ok((input, (name, reward)))
+    let (input, name) =
+        context("table name", terminated(take_until(INDENT), row_separator))(input)?;
+    let (input, count) = context("row count", terminated(u32, row_separator))(input)?;
+    let (input, reward) = context("total reward", terminated(parse_reward, row_ending))(input)?;
+
+    Ok((input, (name.to_string(), count, reward)))
 }
 
 fn row_separator(input: &str) -> IResult<()> {
@@ -175,11 +185,22 @@ fn row_ending(input: &str) -> IResult<()> {
 ///     3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
 /// ```
 fn table_row(input: &str) -> IResult<Row> {
-    let (input, time) = preceded(tag(INDENT), terminated(timestamp, row_separator))(input)?;
-    let (input, vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
-    let (input, enemy_vehicle) = terminated(take_until(INDENT), row_separator)(input)?;
-    let (input, _) = opt(pair(tag("\u{d7}"), row_separator))(input)?;
-    let (input, reward) = terminated(parse_reward, row_ending)(input)?;
+    let (input, (time, vehicle, enemy_vehicle, _, reward)) = tuple((
+        context(
+            "time column",
+            preceded(tag(INDENT), terminated(timestamp, row_separator)),
+        ),
+        context(
+            "vehicle column",
+            terminated(take_until(INDENT), row_separator),
+        ),
+        context(
+            "enemy vehicle column",
+            terminated(take_until(INDENT), row_separator),
+        ),
+        context("optional x", opt(pair(tag("\u{d7}"), row_separator))),
+        context("reward column", terminated(parse_reward, row_ending)),
+    ))(input)?;
 
     Ok((
         input,
@@ -211,10 +232,10 @@ fn timestamp(input: &str) -> IResult<u32> {
 /// 505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
 /// ```
 fn parse_reward(input: &str) -> IResult<Reward> {
-    let (input, (silverlions, research)) = alt((
-        separated_pair(parse_silverlions, row_separator, parse_research_points),
-        map(parse_silverlions, |sl| (sl, 0)),
-    ))(input)?;
+    let (input, (silverlions, research)) = pair(
+        parse_silverlions,
+        map(opt(parse_research_points), |rp| rp.unwrap_or_default()),
+    )(input)?;
 
     Ok((
         input,
@@ -226,24 +247,24 @@ fn parse_reward(input: &str) -> IResult<Reward> {
 }
 
 fn parse_silverlions(input: &str) -> IResult<u32> {
-    let (input, silverlions) = u32(input)?;
-    let (input, _) = tag(" SL")(input)?;
-
-    Ok((input, silverlions))
+    context("silverlions", terminated(u32, tag(" SL")))(input)
 }
 
 fn parse_research_points(input: &str) -> IResult<u32> {
-    alt((parse_research_points_simple, parse_research_points_complex))(input)
+    context(
+        "research points",
+        alt((parse_research_points_simple, parse_research_points_complex)),
+    )(input)
 }
 
 fn parse_research_points_simple(input: &str) -> IResult<u32> {
-    let (input, (rp, _)) = pair(u32, tag(" RP"))(input)?;
-    Ok((input, rp))
+    context("research points simple", terminated(u32, tag(" RP")))(input)
 }
 
 fn parse_research_points_complex(input: &str) -> IResult<u32> {
-    let (input, _) = take_until("= ")(input)?;
-    preceded(tag("= "), parse_research_points_simple)(input)
+    let (input, _) = digit1(input)?;
+    let (input, _) = many1(tuple((tag(" + "), delimited(tag("("), alpha1, tag(")")))))(input)?;
+    preceded(tag(" = "), parse_research_points_simple)(input)
 }
 
 fn parse_events(input: &str) -> IResult<Vec<Event>> {
@@ -445,6 +466,29 @@ mod test {
         assert_eq!(reward.research, research);
     }
 
+    #[test]
+    fn parse_reward_in_table_header() {
+        let input = "255 SL               \n    2:05    Concept 3    M36 GMC()       51 SL\n    3:04    Concept 3    M36 GMC()       51 SL\n    5:56    Concept 3    Chi-To Late     51 SL\n 
+   6:25    Concept 3    M6A1            51 SL\n    6:51    Concept 3    ISU-122()       51 SL\n\nDamage taken by scouted enemies               1     101 SL               \n    3:45    Concept 3    M
+36 GMC()     101 SL\n\nDestruction by allies of scouted enemies      1     505 SL      40 RP    \n    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40
+ RP\n";
+        let (input, reward) = run_parser(input, super::parse_reward);
+        assert!(matches!(
+            reward,
+            Reward {
+                silverlions: 255,
+                research: 0
+            }
+        ));
+
+        let leftover = "               \n    2:05    Concept 3    M36 GMC()       51 SL\n    3:04    Concept 3    M36 GMC()       51 SL\n    5:56    Concept 3    Chi-To Late     51 SL\n 
+   6:25    Concept 3    M6A1            51 SL\n    6:51    Concept 3    ISU-122()       51 SL\n\nDamage taken by scouted enemies               1     101 SL               \n    3:45    Concept 3    M
+36 GMC()     101 SL\n\nDestruction by allies of scouted enemies      1     505 SL      40 RP    \n    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40
+ RP\n";
+
+        assert_eq!(input, leftover);
+    }
+
     #[rstest]
     #[case(
         "    7:13     Concept 3          M6A1            1010 SL    77 RP\n",
@@ -526,12 +570,47 @@ Damage taken by scouted enemies               1     101 SL
 
 Destruction by allies of scouted enemies      1     505 SL      40 RP    
     3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
-
 "#;
         let (input, table) = run_parser(input, super::table);
         assert!(!input.is_empty());
         assert_eq!(table.name, "Scouting of the enemy");
         assert_eq!(table.rows.len(), 5);
+    }
+
+    #[test]
+    fn parse_scouting_table_header_with_leftovers() {
+        let input = r#"Scouting of the enemy                         5     255 SL               
+    2:05    Concept 3    M36 GMC()       51 SL
+    3:04    Concept 3    M36 GMC()       51 SL
+    5:56    Concept 3    Chi-To Late     51 SL
+    6:25    Concept 3    M6A1            51 SL
+    6:51    Concept 3    ISU-122()       51 SL
+
+Damage taken by scouted enemies               1     101 SL               
+    3:45    Concept 3    M36 GMC()     101 SL
+
+Destruction by allies of scouted enemies      1     505 SL      40 RP    
+    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
+"#;
+        let leftover = r#"    2:05    Concept 3    M36 GMC()       51 SL
+    3:04    Concept 3    M36 GMC()       51 SL
+    5:56    Concept 3    Chi-To Late     51 SL
+    6:25    Concept 3    M6A1            51 SL
+    6:51    Concept 3    ISU-122()       51 SL
+
+Damage taken by scouted enemies               1     101 SL               
+    3:45    Concept 3    M36 GMC()     101 SL
+
+Destruction by allies of scouted enemies      1     505 SL      40 RP    
+    3:45    Concept 3    M36 GMC()     ×    505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
+"#;
+
+        let (input, (name, count, reward)) = run_parser(input, super::table_header);
+        assert_eq!(input, leftover);
+        assert_eq!(name, "Scouting of the enemy");
+        assert_eq!(count, 5);
+        assert_eq!(reward.silverlions, 255);
+        assert_eq!(reward.research, 0);
     }
 
     #[test]
