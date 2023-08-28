@@ -13,6 +13,7 @@ pub struct BattleReport {
     pub events: Vec<Event>,
 
     pub awards: Vec<Award>,
+    pub reward_for_winning: Option<Reward>,
     pub other_awards: Reward,
 
     pub vehicles: Vec<Vehicle>,

@@ -7,7 +7,7 @@ use nom::{
         alpha1, char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1,
         u32, u8,
     },
-    combinator::{map, opt, peek, recognize, value},
+    combinator::{map, opt, peek, recognize, success, value},
     error::{context, convert_error, VerboseError},
     multi::{many0, many1, many_m_n},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
@@ -39,12 +39,13 @@ pub fn parse(input: &str) -> Result<BattleReport, Error> {
 }
 
 fn battle_report(input: &str) -> IResult<BattleReport> {
-    let (input, (result, mission_name)) = result_line(input)?;
+    let (input, (result, mission_name)) = context("first line", result_line)(input)?;
 
-    let (input, (events, awards, vehicles, other_awards)) = tuple((
+    let (input, (events, awards, vehicles, reward_for_winning, other_awards)) = tuple((
         context("events", parse_events),
         context("awards", award_table),
         context("activity and time played", vehicle_tables),
+        context("reward for winning", opt(parse_reward_for_winning)),
         context("other awards", parse_other_awards),
     ))(input)?;
 
@@ -70,6 +71,7 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
             mission_name: mission_name.to_string(),
             events,
             awards,
+            reward_for_winning,
             other_awards,
             vehicles,
             activity: 0,
@@ -131,8 +133,6 @@ struct Row {
 /// ```
 fn table(input: &str) -> IResult<Table> {
     let (input, (name, count, _)) = context("table header", table_header)(input)?;
-
-    eprintln!("table name: {name}");
 
     let (input, rows) = context(
         "table rows",
@@ -232,10 +232,15 @@ fn timestamp(input: &str) -> IResult<u32> {
 /// 505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP
 /// ```
 fn parse_reward(input: &str) -> IResult<Reward> {
-    let (input, (silverlions, research)) = pair(
-        parse_silverlions,
-        map(opt(parse_research_points), |rp| rp.unwrap_or_default()),
-    )(input)?;
+    let (input, (silverlions, research)) = alt((
+        pair(
+            parse_silverlions,
+            map(opt(preceded(row_separator, parse_research_points)), |rp| {
+                rp.unwrap_or_default()
+            }),
+        ),
+        pair(success(0), parse_research_points),
+    ))(input)?;
 
     Ok((
         input,
@@ -247,7 +252,30 @@ fn parse_reward(input: &str) -> IResult<Reward> {
 }
 
 fn parse_silverlions(input: &str) -> IResult<u32> {
-    context("silverlions", terminated(u32, tag(" SL")))(input)
+    context(
+        "silverlions",
+        alt((parse_silverlions_simple, parse_silverlions_complex)),
+    )(input)
+}
+
+fn parse_silverlions_simple(input: &str) -> IResult<u32> {
+    context("silverlions simple", terminated(u32, tag(" SL")))(input)
+}
+
+fn parse_silverlions_complex(input: &str) -> IResult<u32> {
+    let (input, (_, _, silverlions)) = tuple((
+        digit1,
+        context(
+            "additions",
+            many1(tuple((
+                tag(" + "),
+                delimited(tag("("), alpha1, tag(")")),
+                digit1,
+            ))),
+        ),
+        preceded(tag(" = "), parse_silverlions_simple),
+    ))(input)?;
+    Ok((input, silverlions))
 }
 
 fn parse_research_points(input: &str) -> IResult<u32> {
@@ -262,13 +290,19 @@ fn parse_research_points_simple(input: &str) -> IResult<u32> {
 }
 
 fn parse_research_points_complex(input: &str) -> IResult<u32> {
-    let (input, _) = digit1(input)?;
-    let (input, _) = many1(tuple((
-        tag(" + "),
-        delimited(tag("("), alpha1, tag(")")),
+    let (input, (_, _, research_points)) = tuple((
         digit1,
-    )))(input)?;
-    preceded(tag(" = "), parse_research_points_simple)(input)
+        context(
+            "additions",
+            many1(tuple((
+                tag(" + "),
+                delimited(tag("("), alpha1, tag(")")),
+                digit1,
+            ))),
+        ),
+        preceded(tag(" = "), parse_research_points_simple),
+    ))(input)?;
+    Ok((input, research_points))
 }
 
 fn parse_events(input: &str) -> IResult<Vec<Event>> {
@@ -305,7 +339,9 @@ fn parse_events(input: &str) -> IResult<Vec<Event>> {
 }
 
 fn award_table(input: &str) -> IResult<Vec<Award>> {
-    let (input, rows) = preceded(table_header, many1(short_row))(input)?;
+    dbg!(input);
+
+    let (input, rows) = context("award header", preceded(table_header, many1(short_row)))(input)?;
     let (input, _) = line_ending(input)?; // empty line
 
     let awards = rows
@@ -373,6 +409,14 @@ fn vehicle_tables(input: &str) -> IResult<Vec<Vehicle>> {
 fn parse_other_awards(input: &str) -> IResult<Reward> {
     delimited(
         pair(tag("Other awards"), row_separator),
+        parse_reward,
+        pair(row_ending, line_ending),
+    )(input)
+}
+
+fn parse_reward_for_winning(input: &str) -> IResult<Reward> {
+    delimited(
+        pair(tag("Reward for winning"), row_separator),
         parse_reward,
         pair(row_ending, line_ending),
     )(input)
@@ -467,8 +511,10 @@ mod test {
     #[case("5820 SL     413 RP", 5820, 413)]
     #[case("1000 SL", 1000, 0)]
     #[case("505 SL    10 + (PA)10 + (Booster)10 + (Talismans)10 = 40 RP", 505, 40)]
+    #[case("53 + (Booster)8 = 61 SL    3 + (Booster)2 = 5 RP", 61, 5)]
     fn parse_reward(#[case] input: &str, #[case] silverlions: u32, #[case] research: u32) {
-        let (_, reward) = super::parse_reward(input).unwrap();
+        let (input, reward) = run_parser(input, super::parse_reward);
+        assert_eq!("", input);
         assert_eq!(reward.silverlions, silverlions);
         assert_eq!(reward.research, research);
     }
