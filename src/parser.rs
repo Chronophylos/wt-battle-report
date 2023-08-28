@@ -263,7 +263,11 @@ fn parse_research_points_simple(input: &str) -> IResult<u32> {
 
 fn parse_research_points_complex(input: &str) -> IResult<u32> {
     let (input, _) = digit1(input)?;
-    let (input, _) = many1(tuple((tag(" + "), delimited(tag("("), alpha1, tag(")")))))(input)?;
+    let (input, _) = many1(tuple((
+        tag(" + "),
+        delimited(tag("("), alpha1, tag(")")),
+        digit1,
+    )))(input)?;
     preceded(tag(" = "), parse_research_points_simple)(input)
 }
 
@@ -433,7 +437,8 @@ mod test {
     #[case("100 RP", 100)]
     #[case("3242 RP", 3242)]
     fn parse_research_points_simple(#[case] input: &str, #[case] expected: u32) {
-        let (_, value) = super::parse_research_points_simple(input).unwrap();
+        let (input, value) = run_parser(input, super::parse_research_points_simple);
+        assert!(input.is_empty());
         assert_eq!(value, expected)
     }
 
@@ -442,7 +447,8 @@ mod test {
     #[case("96 + (Talismans)96 = 192 RP", 192)]
     #[case("113 + (Talismans)113 = 226 RP", 226)]
     fn parse_research_points_complex(#[case] input: &str, #[case] expected: u32) {
-        let (_, value) = super::parse_research_points_complex(input).unwrap();
+        let (input, value) = run_parser(input, super::parse_research_points_complex);
+        assert!(input.is_empty());
         assert_eq!(value, expected)
     }
 
@@ -452,7 +458,8 @@ mod test {
     #[case("96 + (Talismans)96 = 192 RP", 192)]
     #[case("113 + (Talismans)113 = 226 RP", 226)]
     fn parse_research_points(#[case] input: &str, #[case] expected: u32) {
-        let (_, value) = super::parse_research_points(input).unwrap();
+        let (input, value) = run_parser(input, super::parse_research_points);
+        assert!(input.is_empty());
         assert_eq!(value, expected)
     }
 
