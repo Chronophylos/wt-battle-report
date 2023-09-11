@@ -2,18 +2,20 @@
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_until, take_while, take_while1},
-    character::complete::{
-        alpha1, char, digit1, line_ending, multispace0, newline, not_line_ending, space0, space1,
-        u32, u8,
+    bytes::complete::{tag, take_until, take_while},
+    character::{
+        complete::{alpha1, alphanumeric1, digit1, line_ending, space1, u32, u8},
+        is_alphanumeric,
     },
-    combinator::{map, opt, peek, recognize, success, value},
+    combinator::{map, opt, success, value},
     error::{context, convert_error, VerboseError},
-    multi::{many0, many1, many_m_n},
+    multi::{many0, many1, many_m_n, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
 };
 
-use crate::{battle_report::BattleReport, Award, BattleResult, Event, Reward, Vehicle};
+use crate::{
+    battle_report::BattleReport, Award, BattleResult, Event, Reward, Vehicle, VehicleResearch,
+};
 
 type IResult<'a, O> = nom::IResult<&'a str, O, VerboseError<&'a str>>;
 
@@ -41,21 +43,37 @@ pub fn parse(input: &str) -> Result<BattleReport, Error> {
 fn battle_report(input: &str) -> IResult<BattleReport> {
     let (input, (result, mission_name)) = context("first line", result_line)(input)?;
 
-    let (input, (events, awards, vehicles, reward_for_winning, other_awards)) = tuple((
+    let (
+        input,
+        (
+            events,
+            awards,
+            vehicles,
+            reward_for_winning,
+            other_awards,
+            earned_rewards,
+            activity,
+            damaged_vehicles,
+            automatic_repair,
+            automatic_purchases,
+            _,
+            vehicle_research,
+        ),
+    ) = tuple((
         context("events", parse_events),
         context("awards", award_table),
         context("activity and time played", vehicle_tables),
         context("reward for winning", opt(parse_reward_for_winning)),
         context("other awards", parse_other_awards),
+        context("earned", parse_earned),
+        context("activity", parse_activity),
+        context("damaged vehicles", parse_damaged_vehicles),
+        context("automatic repair", parse_automatic_repair),
+        context("automatic purchase", parse_automatic_purchase),
+        line_ending,
+        context("researched vehicles", parse_researched_units),
     ))(input)?;
 
-    // TODO: earned
-    // TODO: activity
-    // TODO: damaged vehicles
-    // TODO: automatic repair
-    // TODO: automatic restock
-
-    // TODO: vehicle research
     // TODO: modification research
 
     // TODO: used items (optional)
@@ -74,13 +92,13 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
             reward_for_winning,
             other_awards,
             vehicles,
-            activity: 0,
-            damaged_vehicles: vec![],
-            repair_cost: 0,
-            ammo_and_crew_cost: 0,
-            vehicle_research: vec![],
+            activity,
+            damaged_vehicles,
+            automatic_repair,
+            automatic_purchases,
+            vehicle_research,
             modification_research: vec![],
-            earned_rewards: Default::default(),
+            earned_rewards,
             balance: Default::default(),
         },
     ))
@@ -416,6 +434,81 @@ fn parse_reward_for_winning(input: &str) -> IResult<Reward> {
         pair(tag("Reward for winning"), row_separator),
         parse_reward,
         pair(row_ending, line_ending),
+    )(input)
+}
+
+fn vehicle_name(input: &str) -> IResult<String> {
+    map(
+        take_while(|c: char| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | ' ' => true,
+            '#' | '&' | '\'' | '(' | ')' | ',' | '-' | '.' | '/' | '_' => true,
+            _ => false,
+        }),
+        String::from,
+    )(input)
+}
+
+fn parse_earned(input: &str) -> IResult<Reward> {
+    map(
+        delimited(
+            tag("Earned: "),
+            separated_pair(
+                parse_silverlions_simple,
+                tag(", "),
+                terminated(u32, tag(" CRP")),
+            ),
+            line_ending,
+        ),
+        |(silverlions, research)| Reward {
+            silverlions,
+            research,
+        },
+    )(input)
+}
+
+fn parse_activity(input: &str) -> IResult<u8> {
+    map(
+        delimited(tag("Activity: "), terminated(u8, tag("%")), line_ending),
+        |activity| activity,
+    )(input)
+}
+
+fn parse_damaged_vehicles(input: &str) -> IResult<Vec<String>> {
+    delimited(
+        tag("Damaged Vehicles: "),
+        separated_list1(tag(", "), map(vehicle_name, String::from)),
+        line_ending,
+    )(input)
+}
+
+fn parse_automatic_repair(input: &str) -> IResult<u32> {
+    delimited(
+        tag("Automatic repair of all vehicles: -"),
+        parse_silverlions_simple,
+        line_ending,
+    )(input)
+}
+
+fn parse_automatic_purchase(input: &str) -> IResult<u32> {
+    delimited(
+        tag("Automatic purchasing of ammo and \"Crew Replenishment\": -"),
+        parse_silverlions_simple,
+        line_ending,
+    )(input)
+}
+
+fn parse_researched_units(input: &str) -> IResult<Vec<VehicleResearch>> {
+    delimited(
+        pair(tag("Researched units:"), line_ending),
+        many1(parse_vehicle_research),
+        line_ending,
+    )(input)
+}
+
+fn parse_vehicle_research(input: &str) -> IResult<VehicleResearch> {
+    map(
+        separated_pair(vehicle_name, tag(": "), parse_research_points_simple),
+        |(name, research)| VehicleResearch { name, research },
     )(input)
 }
 

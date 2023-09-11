@@ -21,8 +21,8 @@ pub struct BattleReport {
     pub activity: u8,
 
     pub damaged_vehicles: Vec<String>,
-    pub repair_cost: u32,
-    pub ammo_and_crew_cost: u32,
+    pub automatic_repair: u32,
+    pub automatic_purchases: u32,
     pub vehicle_research: Vec<VehicleResearch>,
     pub modification_research: Vec<ModificationResearch>,
 
