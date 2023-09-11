@@ -3,9 +3,8 @@
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
-    character::{
-        complete::{alpha1, alphanumeric1, digit1, line_ending, space1, u32, u8},
-        is_alphanumeric,
+    character::complete::{
+        alpha1, alphanumeric1, digit1, hex_digit1, line_ending, not_line_ending, space1, u32, u8,
     },
     combinator::{map, opt, success, value},
     error::{context, convert_error, VerboseError},
@@ -14,7 +13,8 @@ use nom::{
 };
 
 use crate::{
-    battle_report::BattleReport, Award, BattleResult, Event, Reward, Vehicle, VehicleResearch,
+    battle_report::BattleReport, Award, BattleResult, Event, ModificationResearch, Reward, Vehicle,
+    VehicleResearch,
 };
 
 type IResult<'a, O> = nom::IResult<&'a str, O, VerboseError<&'a str>>;
@@ -58,6 +58,10 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
             automatic_purchases,
             _,
             vehicle_research,
+            modification_research,
+            _,
+            session_id,
+            (balance, _raw_research),
         ),
     ) = tuple((
         context("events", parse_events),
@@ -71,20 +75,22 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
         context("automatic repair", parse_automatic_repair),
         context("automatic purchase", parse_automatic_purchase),
         line_ending,
-        context("researched vehicles", parse_researched_units),
+        context("researched vehicles", opt(parse_researched_units)),
+        context(
+            "researched modifications",
+            opt(parse_researched_modifications),
+        ),
+        context("used items", opt(parse_used_items)),
+        context("session id", parse_session_id),
+        context("total", parse_total),
     ))(input)?;
 
-    // TODO: modification research
-
-    // TODO: used items (optional)
-
-    // TODO: session
     // TODO: total
 
     Ok((
         input,
         BattleReport {
-            session_id: "".to_string(),
+            session_id,
             result,
             mission_name: mission_name.to_string(),
             events,
@@ -96,10 +102,10 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
             damaged_vehicles,
             automatic_repair,
             automatic_purchases,
-            vehicle_research,
-            modification_research: vec![],
+            vehicle_research: vehicle_research.unwrap_or_default(),
+            modification_research: modification_research.unwrap_or_default(),
             earned_rewards,
-            balance: Default::default(),
+            balance,
         },
     ))
 }
@@ -323,6 +329,10 @@ fn parse_research_points_complex(input: &str) -> IResult<u32> {
     Ok((input, research_points))
 }
 
+fn parse_crp(input: &str) -> IResult<u32> {
+    terminated(u32, tag(" CRP"))(input)
+}
+
 fn parse_events(input: &str) -> IResult<Vec<Event>> {
     let (input, tables) = context("event tables", many0(table))(input)?;
 
@@ -452,11 +462,7 @@ fn parse_earned(input: &str) -> IResult<Reward> {
     map(
         delimited(
             tag("Earned: "),
-            separated_pair(
-                parse_silverlions_simple,
-                tag(", "),
-                terminated(u32, tag(" CRP")),
-            ),
+            separated_pair(parse_silverlions_simple, tag(", "), parse_crp),
             line_ending,
         ),
         |(silverlions, research)| Reward {
@@ -499,7 +505,7 @@ fn parse_automatic_purchase(input: &str) -> IResult<u32> {
 
 fn parse_researched_units(input: &str) -> IResult<Vec<VehicleResearch>> {
     delimited(
-        pair(tag("Researched units:"), line_ending),
+        pair(tag("Researched unit:"), line_ending),
         many1(parse_vehicle_research),
         line_ending,
     )(input)
@@ -509,6 +515,72 @@ fn parse_vehicle_research(input: &str) -> IResult<VehicleResearch> {
     map(
         separated_pair(vehicle_name, tag(": "), parse_research_points_simple),
         |(name, research)| VehicleResearch { name, research },
+    )(input)
+}
+
+fn parse_researched_modifications(input: &str) -> IResult<Vec<ModificationResearch>> {
+    delimited(
+        pair(tag("Researching progress:"), line_ending),
+        many1(parse_researched_modification),
+        line_ending,
+    )(input)
+}
+
+fn parse_researched_modification(input: &str) -> IResult<ModificationResearch> {
+    map(
+        tuple((
+            vehicle_name,
+            tag(" - "),
+            alphanumeric1,
+            tag(": "),
+            parse_research_points_simple,
+        )),
+        |(vehicle, _, name, _, research)| ModificationResearch {
+            vehicle,
+            name: name.to_string(),
+            research,
+        },
+    )(input)
+}
+
+fn parse_used_items(input: &str) -> IResult<(&str, &str)> {
+    delimited(
+        pair(tag("Used items:"), line_ending),
+        pair(not_line_ending, line_ending),
+        line_ending,
+    )(input)
+}
+
+fn parse_session_id(input: &str) -> IResult<String> {
+    delimited(
+        pair(tag("Session ID: "), line_ending),
+        map(hex_digit1, String::from),
+        line_ending,
+    )(input)
+}
+
+fn parse_total(input: &str) -> IResult<(Reward, u32)> {
+    map(
+        delimited(
+            pair(tag("Total: "), line_ending),
+            tuple((
+                parse_silverlions_simple,
+                tag(", "),
+                parse_crp,
+                tag(", "),
+                parse_research_points_simple,
+            )),
+            line_ending,
+        ),
+        |(silverlions, _, crp, _, research)| {
+            (
+                Reward {
+                    silverlions,
+                    research,
+                },
+                crp,
+            )
+        },
     )(input)
 }
 
