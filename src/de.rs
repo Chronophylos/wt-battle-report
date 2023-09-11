@@ -4,6 +4,8 @@ use std::io;
 
 use crate::{battle_report::BattleReport, parser};
 
+pub use parser::Error;
+
 pub fn from_str(input: &str) -> Result<BattleReport, parser::Error> {
     parser::parse(input)
 }
