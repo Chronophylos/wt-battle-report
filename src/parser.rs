@@ -10,7 +10,6 @@ use nom::{
     error::{context, convert_error, VerboseError},
     multi::{many0, many1, many_m_n, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
-    Parser,
 };
 
 use crate::{
