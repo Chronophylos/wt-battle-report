@@ -1,15 +1,16 @@
 //! Battle Report Parser
 
+use std::fmt::Debug;
+
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
-    character::complete::{
-        alpha1, alphanumeric1, digit1, hex_digit1, line_ending, not_line_ending, space1, u32, u8,
-    },
-    combinator::{map, opt, success, value},
+    character::complete::{alpha1, digit1, hex_digit1, line_ending, space1, u32, u8},
+    combinator::{map, map_parser, opt, success, value},
     error::{context, convert_error, VerboseError},
     multi::{many0, many1, many_m_n, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
+    Parser,
 };
 
 use crate::{
@@ -84,8 +85,6 @@ fn battle_report(input: &str) -> IResult<BattleReport> {
         context("session id", parse_session_id),
         context("total", parse_total),
     ))(input)?;
-
-    // TODO: total
 
     Ok((
         input,
@@ -447,6 +446,7 @@ fn parse_reward_for_winning(input: &str) -> IResult<Reward> {
     )(input)
 }
 
+// FIXME: too greedy :(
 fn vehicle_name(input: &str) -> IResult<String> {
     map(
         take_while(|c: char| match c {
@@ -505,36 +505,46 @@ fn parse_automatic_purchase(input: &str) -> IResult<u32> {
 
 fn parse_researched_units(input: &str) -> IResult<Vec<VehicleResearch>> {
     delimited(
-        pair(tag("Researched unit:"), line_ending),
-        many1(parse_vehicle_research),
+        pair(tag("Researched unit: "), line_ending),
+        context("researched vehicles", many1(parse_vehicle_research)),
         line_ending,
     )(input)
 }
 
 fn parse_vehicle_research(input: &str) -> IResult<VehicleResearch> {
     map(
-        separated_pair(vehicle_name, tag(": "), parse_research_points_simple),
+        terminated(
+            separated_pair(vehicle_name, tag(": "), parse_research_points_simple),
+            line_ending,
+        ),
         |(name, research)| VehicleResearch { name, research },
     )(input)
 }
 
 fn parse_researched_modifications(input: &str) -> IResult<Vec<ModificationResearch>> {
     delimited(
-        pair(tag("Researching progress:"), line_ending),
-        many1(parse_researched_modification),
+        pair(tag("Researching progress: "), line_ending),
+        many1(parse_modification_research),
         line_ending,
     )(input)
 }
 
-fn parse_researched_modification(input: &str) -> IResult<ModificationResearch> {
+fn parse_modification_research(input: &str) -> IResult<ModificationResearch> {
+    dbg!(input);
     map(
-        tuple((
-            vehicle_name,
-            tag(" - "),
-            alphanumeric1,
-            tag(": "),
-            parse_research_points_simple,
-        )),
+        terminated(
+            tuple((
+                map_parser(take_until(" - "), vehicle_name),
+                tag(" - "),
+                context(
+                    "name",
+                    take_while(|c: char| c.is_ascii_alphanumeric() || c == ' '),
+                ),
+                tag(": "),
+                parse_research_points_simple,
+            )),
+            line_ending,
+        ),
         |(vehicle, _, name, _, research)| ModificationResearch {
             vehicle,
             name: name.to_string(),
@@ -543,26 +553,35 @@ fn parse_researched_modification(input: &str) -> IResult<ModificationResearch> {
     )(input)
 }
 
-fn parse_used_items(input: &str) -> IResult<(&str, &str)> {
-    delimited(
-        pair(tag("Used items:"), line_ending),
-        pair(not_line_ending, line_ending),
-        line_ending,
+fn inspect<I, O, E, P>(mut p: P) -> impl FnMut(I) -> nom::IResult<I, O, E>
+where
+    P: Parser<I, O, E>,
+    I: Debug + Clone,
+    O: Debug,
+{
+    move |input: I| {
+        let old_input = input.clone();
+        let (input, output) = p.parse(input)?;
+        eprintln!("{old_input:?} -> {output:?} + {input:?}");
+        Ok((input, output))
+    }
+}
+
+fn parse_used_items(input: &str) -> IResult<&str> {
+    preceded(
+        pair(tag("Used items: "), line_ending),
+        take_until("Session: "),
     )(input)
 }
 
 fn parse_session_id(input: &str) -> IResult<String> {
-    delimited(
-        pair(tag("Session ID: "), line_ending),
-        map(hex_digit1, String::from),
-        line_ending,
-    )(input)
+    delimited(tag("Session: "), map(hex_digit1, String::from), line_ending)(input)
 }
 
 fn parse_total(input: &str) -> IResult<(Reward, u32)> {
     map(
-        delimited(
-            pair(tag("Total: "), line_ending),
+        preceded(
+            tag("Total: "),
             tuple((
                 parse_silverlions_simple,
                 tag(", "),
@@ -570,7 +589,6 @@ fn parse_total(input: &str) -> IResult<(Reward, u32)> {
                 tag(", "),
                 parse_research_points_simple,
             )),
-            line_ending,
         ),
         |(silverlions, _, crp, _, research)| {
             (
@@ -882,5 +900,37 @@ Time Played                                   3               1057 RP
         assert_eq!(vehicles[0].time_played, 8 * 60 + 21);
         assert_eq!(vehicles[0].reward.silverlions, 730);
         assert_eq!(vehicles[0].reward.research, 68 + 680);
+    }
+
+    #[test]
+    fn test_parse_vehicle_research() {
+        let input = "T-34 (1941): 1191 RP\n";
+        let (input, research) = run_parser(input, super::parse_vehicle_research);
+        assert_eq!(input, "");
+        assert_eq!(research.name, "T-34 (1941)");
+        assert_eq!(research.research, 1191);
+    }
+
+    #[test]
+    fn test_parse_researched_units() {
+        let input = r#"Researched unit: 
+T-34 (1941): 1191 RP
+
+"#;
+        let (input, research) = run_parser(input, super::parse_researched_units);
+        assert_eq!(input, "");
+        assert_eq!(research.len(), 1);
+        assert_eq!(research[0].name, "T-34 (1941)");
+        assert_eq!(research[0].research, 1191);
+    }
+
+    #[test]
+    fn test_parse_modification_research() {
+        let input = "YaG-10 (29-K) - Improved Parts: 220 RP\n";
+        let (input, research) = run_parser(input, super::parse_modification_research);
+        assert_eq!(input, "");
+        assert_eq!(research.vehicle, "YaG-10 (29-K)");
+        assert_eq!(research.name, "Improved Parts");
+        assert_eq!(research.research, 220);
     }
 }
