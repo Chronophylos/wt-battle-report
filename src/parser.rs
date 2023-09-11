@@ -553,20 +553,6 @@ fn parse_modification_research(input: &str) -> IResult<ModificationResearch> {
     )(input)
 }
 
-fn inspect<I, O, E, P>(mut p: P) -> impl FnMut(I) -> nom::IResult<I, O, E>
-where
-    P: Parser<I, O, E>,
-    I: Debug + Clone,
-    O: Debug,
-{
-    move |input: I| {
-        let old_input = input.clone();
-        let (input, output) = p.parse(input)?;
-        eprintln!("{old_input:?} -> {output:?} + {input:?}");
-        Ok((input, output))
-    }
-}
-
 fn parse_used_items(input: &str) -> IResult<&str> {
     preceded(
         pair(tag("Used items: "), line_ending),

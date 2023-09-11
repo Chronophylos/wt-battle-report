@@ -2,6 +2,14 @@
 name = "wt-battle-report"
 version = "0.1.0"
 edition = "2021"
+authors = ["Nikolai Zimmermann <nikolai@chronophylos.com>"]
+description = "A parser for War Thunder battle reports"
+documentation = "https://docs.rs/wt-battle-report"
+readme = "README.md"
+repository = "https://github.com/chronophylos/wt-battle-report"
+license = "MIT OR Apache-2.0"
+keywords = ["war-thunder", "parser"]
+categories = ["parser-implementation"]
 
 [dependencies]
 nom = "7.1.3"
